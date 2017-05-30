@@ -1,0 +1,5 @@
+default_version = '0.1'
+module_pathname = '$libdir/pg_tileless'
+requires 'postgis, postgis_sfcgal'
+relocatable = true
+comment = 'Tools for packaging twkb in sqlite for tileless'
