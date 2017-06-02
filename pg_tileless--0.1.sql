@@ -55,7 +55,7 @@ create table tmp.'||prefix||'_ordered as
 select *  from 
 (select '||id_fld||', '||geom_fld||',  st_centroid('||geom_fld||') centr '||other_flds||'
 from '||tbl||') a
-order by round(st_x(centr)/1000),round(st_y(centr)/1000);';
+order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
 
 
 RAISE NOTICE 'Klar med spatial ordering';
@@ -234,7 +234,7 @@ create table tmp.'||prefix||'_ordered as
 select *  from 
 (select '||id_fld||', '||geom_fld||',  st_centroid('||geom_fld||') centr '||other_flds||'
 from '||tbl||') a
-order by round(st_x(centr)/1000),round(st_y(centr)/1000);';
+order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
 
 
 RAISE NOTICE 'Klar med spatial ordering';
