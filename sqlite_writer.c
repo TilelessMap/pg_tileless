@@ -157,19 +157,21 @@ if(create)
 	snprintf(insert_str+strlengd_ins, SQLSTRLEN-strlengd_ins, " %s%s%s",")",value_list,")" );
 	
 	elog(INFO, "sql: %s", create_table_string);
-	elog(INFO, "insert sql: %s", insert_str);
 	if(create)
 	{
 	rc = sqlite3_exec(db, create_table_string, NULL, 0, &err_msg);
 	    
 	    if (rc != SQLITE_OK ) {	
+            
+        elog(INFO, "error creating table");
 		    sqlite3_free(err_msg);
 		sqlite3_close(db);	
-		    ereport(ERROR,  ( errmsg("Problem creating table: %s", err_msg)));
+            return 1;
 		//fprintf(stderr, "SQL error: %s\n", err_msg);
 		
 	    } 	
     }
+	elog(INFO, "insert sql: %s", insert_str);
 		return 0;
 }
 
@@ -186,7 +188,7 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
 	int val_int, proc,j;
 	float8 val_float;
 	
-	int64 val_int64;
+ 	int64 val_int64;
 	bool null_check;
 		TupleDesc tupdesc;
 	SPITupleTable *tuptable;
@@ -203,9 +205,10 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
 			rc = sqlite3_exec(db, sql_txt_pg, NULL, 0, &err_msg);
 		    
 		    if (rc != SQLITE_OK ) {	
-			    sqlite3_free(err_msg);
-			sqlite3_close(db);	
-			    ereport(ERROR,  ( errmsg("Problem creating table: %s", err_msg)));
+                sqlite3_free(err_msg);
+                sqlite3_close(db);	
+                elog(INFO, "Problem creating index: %s", err_msg);
+                return 1;
 			//fprintf(stderr, "SQL error: %s\n", err_msg);		
 		    } 	
 		   elog(INFO, "create table string: %s", sql_txt_pg); 
@@ -236,8 +239,14 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
 	do
 	{
 		
-	sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, &err_msg);
-		
+	rc = sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, &err_msg);
+			 if (rc != SQLITE_OK ) {	
+                sqlite3_free(err_msg);
+                sqlite3_close(db);	
+                elog(INFO, "Problemstarting transaction: %s", err_msg);
+                return 1;
+			//fprintf(stderr, "SQL error: %s\n", err_msg);		
+		    } 	
 		SPI_cursor_fetch(cur, true,100000);
 		
 		proc = SPI_processed;
@@ -321,12 +330,24 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
 					
 					
 		
-	    	sqlite3_step(prepared_statement);	
+            	 if(sqlite3_step(prepared_statement) == SQLITE_ERROR)
+                {
+                    elog(INFO, "Problem inserting rows");
+                sqlite3_free(err_msg);
+                sqlite3_close(db);	
+                    return 1;
+                }
 		sqlite3_clear_bindings(prepared_statement);
 				sqlite3_reset(prepared_statement);
 		}
 		
-	sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &err_msg);
+	rc = sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &err_msg);
+    			 if (rc != SQLITE_OK ) {	
+                sqlite3_free(err_msg);
+                sqlite3_close(db);	
+                elog(INFO, "Problem rnding transaction: %s", err_msg);
+                return 1;
+                 }
 	elog(INFO, "inserted %d rows in index",tot_rows);
 	}
 	while (proc > 0);
@@ -362,15 +383,23 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 	
 	spi_conn = SPI_connect();
 	if (spi_conn!=SPI_OK_CONNECT)
-		ereport(ERROR,  ( errmsg("Failed to open SPI Connection")));
-	
+    {		
+		elog(INFO,"Couldn't connect to PG");
+        
+	SPI_finish();
+        return 1;
+	}	
 	/*Open the sqlite db to write to*/
 	rc = sqlite3_open(sqlitedb_name, &db);
 		
 		
-	if (rc != SQLITE_OK) {	
+	if (rc != SQLITE_OK) 
+    {	
 		sqlite3_close(db);			
-		ereport(ERROR,  ( errmsg("Cannot open SQLite database")));
+		elog(INFO,"Couldn't open sqlite-db");
+        
+	SPI_finish();
+        return 1;
 	}
 	
 	plan =  SPI_prepare(sql_string,0,NULL);
@@ -379,8 +408,12 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 
 	
 	elog(INFO, "build sql-strings and create table if : %d",create);
-		create_sqlite_table(&cur,db, insert_str,dataset_name,twkb_name, id_name,create);
-	
+	if(	create_sqlite_table(&cur,db, insert_str,dataset_name,twkb_name, id_name,create))
+    {
+        elog(INFO, "failed");        
+        SPI_finish();
+        return 1; 
+    }
 	   elog(INFO, "back from creating table"); 
 	elog(INFO, "inserted sql = %s",insert_str);
 //TODO add error handling	
@@ -484,8 +517,16 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 				}		
 
 		}
-	    			sqlite3_step(prepared_statement);	
-		sqlite3_clear_bindings(prepared_statement);
+	    		if(sqlite3_step(prepared_statement) == SQLITE_ERROR)
+                {
+                sqlite3_free(err_msg);
+                sqlite3_close(db);	
+                    elog(INFO, "Problem inserting rows");
+                    
+                    SPI_finish();
+                    return 1;
+                }
+                sqlite3_clear_bindings(prepared_statement);
 				sqlite3_reset(prepared_statement);
 		}
 		
@@ -496,7 +537,15 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 	while (proc > 0);
 	
 	if(dataset_name && idx_geom && idx_id)
-		create_spatial_index(db,dataset_name,idx_tbl, idx_geom, idx_id,id_name, sql_string,create);
+    {
+		if(create_spatial_index(db,dataset_name,idx_tbl, idx_geom, idx_id,id_name, sql_string,create))
+        {
+            elog(INFO, "failed");
+            
+            SPI_finish();
+            return 1; //We return without failure because otherwise the whole t4ransaction will be rolled bask in pg.
+        }
+    }
 	else
 		elog(INFO, "Finnishing without spatial index");
 	

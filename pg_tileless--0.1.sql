@@ -12,7 +12,7 @@ create schema if not exists tileless;
 create schema if not exists tmp;
 
 CREATE OR REPLACE FUNCTION tileless.TWKB_Write2SQLite(sqlitedb text,dataset_name text ,sql_string text, twkb_name text,id_name text,idx_tbl text, idx_geom text default '', idx_id text default '', create_table int default 1)
-RETURNS void
+RETURNS int
 AS 'MODULE_PATHNAME', 'TWKB_Write2SQLite'
 LANGUAGE c ;
 
@@ -27,9 +27,10 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_polygon(
     prefix text,
     n_decimals integer,
     subdivide boolean)
-  RETURNS bigint AS
+  RETURNS int AS
 $BODY$
-
+declare
+res int;
 BEGIN
 
 if length(other_flds) >0 then
@@ -172,16 +173,21 @@ RAISE NOTICE 'Starta skrivning till sqlite %s',now()::text;
 execute 'create or replace temp view onepoly as
 select * from tmp.'||prefix||'_boundary;';
 
+execute 'drop table if exists tileless.'||layer_name||'; create table tileless.'||layer_name||' as 
+SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||', geom from 
+tmp.'||prefix||'_boundary bd inner join
+tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id';
+
 
 execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 '''||layer_name||''',
 ''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||' from 
 tmp.'||prefix||'_boundary bd inner join
 tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id'',
-''twkb'',''twkb_id'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'',1);';
+''twkb'',''twkb_id'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'',1);' into res;
 
 
-return 0;
+return res;
 END
 $BODY$
   LANGUAGE plpgsql VOLATILE;
@@ -202,7 +208,8 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_linestring(
     subdivide boolean)
   RETURNS bigint AS
 $BODY$
-
+declare 
+res iint;
 BEGIN
 
 if length(other_flds) >0 then
@@ -264,10 +271,10 @@ execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 '''||layer_name||''',
 ''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 tmp.'||prefix||'_subgeoms bd '',
-''twkb'',''twkb_id'', ''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);';
+''twkb'',''twkb_id'', ''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
 
 
-return 0;
+return res;
 END
 $BODY$
   LANGUAGE plpgsql VOLATILE
