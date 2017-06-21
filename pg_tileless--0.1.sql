@@ -67,7 +67,7 @@ if subdivide then
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	st_subdivide((st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5),1/10^'||n_decimals||'),0)),3))).geom,2048) geom '||other_flds||'
+	st_subdivide((st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),3))).geom,2048) geom '||other_flds||'
 	from tmp.'||prefix||'_ordered
 	)
 	,b as (select orig_id, ST_ForceRHR((st_dump(st_collectionextract(st_makevalid(geom),3))).geom) geom '||other_flds||' from a)
@@ -77,7 +77,7 @@ else
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5),1/10^'||n_decimals||'),0)),3))).geom geom '||other_flds||'
+	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),3))).geom geom '||other_flds||'
 	from tmp.'||prefix||'_ordered
 	)
 	,b as (select orig_id, ST_ForceRHR((st_dump(st_collectionextract(st_makevalid(geom),3))).geom) geom '||other_flds||' from a)
@@ -246,7 +246,7 @@ if subdivide then
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	st_subdivide((st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5),1/10^'||n_decimals||'),0)),2))).geom,2048) geom '||other_flds||'
+	st_subdivide((st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),2))).geom,2048) geom '||other_flds||'
 	from tmp.'||prefix||'_ordered
 	)
 	,b as (select orig_id, ST_ForceRHR((st_dump(st_collectionextract(st_makevalid(geom),2))).geom) geom '||other_flds||' from a)
@@ -256,7 +256,7 @@ else
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5),1/10^'||n_decimals||'),0)),2))).geom geom '||other_flds||'
+	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),2))).geom geom '||other_flds||'
 	from tmp.'||prefix||'_ordered
 	)
 	,b as (select orig_id, ST_ForceRHR((st_dump(st_collectionextract(st_makevalid(geom),2))).geom) geom '||other_flds||' from a)
