@@ -209,7 +209,7 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_linestring(
   RETURNS bigint AS
 $BODY$
 declare 
-res iint;
+res int;
 BEGIN
 
 if length(other_flds) >0 then
