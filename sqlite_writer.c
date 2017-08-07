@@ -21,7 +21,7 @@
 
 int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_name, char *twkb_name,char *id_name,int create);
 //int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_geom, char *idx_id, char *sql_string);
-int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id,char *id_name, char *sql_string, int create);
+int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id, char *sql_string, int create);
 
 /*Input a postgres type and get a sqlite type back
 Anything but what is defined in types results as "text"*/
@@ -175,7 +175,7 @@ int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_
     return 0;
 }
 
-int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id,char *id_name, char *sql_string, int create)
+int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id, char *sql_string, int create)
 {
     char sql_txt_pg[SQLSTRLEN];
     char sql_txt_sqlite[SQLSTRLEN];
@@ -218,9 +218,10 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
              idx_id,
              idx_geom,
              idx_tbl,
-             id_name);
+             idx_id);
 
     elog(INFO, "select table string: %s", sql_txt_pg);
+    printf("problem: %s", sql_txt_pg);
     plan =  SPI_prepare(sql_txt_pg,0,NULL);
     //ret = SPI_exec(sql_string, 0);
     cur = SPI_cursor_open("index_cursor", plan,NULL,NULL,true);
@@ -353,6 +354,7 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
     while (proc > 0);
 
 
+    SPI_cursor_close(cur);
 
 
     return 0;
@@ -538,7 +540,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 
     if(dataset_name && idx_geom && idx_id)
     {
-        if(create_spatial_index(db,dataset_name,idx_tbl, idx_geom, idx_id,id_name, sql_string,create))
+        if(create_spatial_index(db,dataset_name,idx_tbl, idx_geom, idx_id,sql_string,create))
         {
             elog(INFO, "failed");
 
@@ -549,6 +551,24 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
     else
         elog(INFO, "Finnishing without spatial index");
 
+    
+    if(strcmp(idx_id, id_name))
+    {
+     //Since idx_id is different than id_name we have to add an index for idx_id too in main table
+        
+        char sqlstr[128];
+        snprintf(sqlstr, 128,  "create index idx_%s_idx_id on %s( %s );", dataset_name, dataset_name, idx_id);
+        rc = sqlite3_exec(db, sqlstr, NULL, NULL, &err_msg);
+        if (rc != SQLITE_OK ) 
+        {
+            sqlite3_free(err_msg);
+            sqlite3_close(db);
+            elog(INFO, "Problem with sql '%s', error =  %s",sqlstr,  err_msg);
+            return 1;
+        }
+    }
+    
+    SPI_cursor_close(cur);
     SPI_finish();
     sqlite3_close(db);
 
