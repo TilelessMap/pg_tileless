@@ -130,11 +130,11 @@ else
 	with a as (select twkb_id,orig_id,  st_dumprings(geom) d '||other_flds||' from tmp.'||prefix||'_subgeoms )
 	,b as (select twkb_id, orig_id, ST_ExteriorRing((d).geom) geom, (d).path path '||other_flds||' from a order by (d).path)
 	,c as (select st_npoints(geom) npoints, twkb_id, orig_id,geom, path '||other_flds||' from b)
-	d as (select twkb_id, orig_id,st_collect(st_removepoint(geom,npoints-1) order by path) geom '||other_flds||' from c group by twkb_id, orig_id  '||other_flds||')
+	,d as (select twkb_id, orig_id,st_collect(st_removepoint(geom,npoints-1) order by path) geom '||other_flds||' from c group by twkb_id, orig_id  '||other_flds||')
 	select twkb_id, orig_id,geom, 
 	(st_xmin(geom) + (st_xmax(geom)-st_xmin(geom))/2)/10000 boxx, (st_ymin(geom) + (st_ymax(geom)-st_ymin(geom))/2)/10000 boxy '||other_flds||' from d;
-	drop table if exists  tmp.'||prefix||'_for_index;
-	create table tmp.'||prefix||'_for_index as SELECT ST_COLLECT(geom) geom, idx_id from tmp.'||prefix||'_boundary group by idx_id';
+/*	drop table if exists  tmp.'||prefix||'_for_index;
+	create table tmp.'||prefix||'_for_index as SELECT ST_COLLECT(geom) geom, idx_id from tmp.'||prefix||'_boundary group by idx_id*/';
 end if;
 
 
@@ -315,7 +315,7 @@ execute '
 	'''||layer_name||''',
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_w_rank bd order by boxx, boxy'',
-	''twkb'',''twkb_id'', ''tmp.'||prefix||'_w_rank'',''geom'', ''idx_id'',1);' into res;
+	''twkb'',''twkb_id'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
 else
 	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 	'''||layer_name||''',
