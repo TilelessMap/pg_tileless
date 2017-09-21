@@ -11,7 +11,7 @@ create schema if not exists tileless;
 
 create schema if not exists tmp;
 
-CREATE OR REPLACE FUNCTION tileless.TWKB_Write2SQLite(sqlitedb text,dataset_name text ,sql_string text, twkb_name text,id_name text,idx_tbl text, idx_geom text default '', idx_id text default '', create_table int default 1)
+CREATE OR REPLACE FUNCTION tileless.TWKB_Write2SQLite(sqlitedb text,dataset_name text ,sql_string text, id_name text,twkb_name text default NULL,idx_tbl text default NULL, idx_geom text default NULL, idx_id text default NULL, create_table int default 1)
 RETURNS int
 AS 'MODULE_PATHNAME', 'TWKB_Write2SQLite'
 LANGUAGE c ;
@@ -68,7 +68,7 @@ if subdivide then
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw(st_subdivide('||geom_fld||',2048), 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),3))).geom geom '||other_flds||'
+	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw(st_subdivide('||geom_fld||',2048), 0.5/10^('||n_decimals||')),1/10^('||n_decimals||')),0)),3))).geom geom '||other_flds||'
 	/*from tmp.'||prefix||'_ordered*/
 	from '||tbl||'
 	)
@@ -79,7 +79,7 @@ else
 	'drop table if exists tmp.'||prefix||'_subgeoms;
 	create table tmp.'||prefix||'_subgeoms as
 	with a as (select '||id_fld||' orig_id, 
-	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^'||n_decimals||'),1/10^'||n_decimals||'),0)),3))).geom geom '||other_flds||'
+	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid(st_simplifyvw('||geom_fld||', 0.5/10^('||n_decimals||')),1/10^('||n_decimals||')),0)),3))).geom geom '||other_flds||'
 	/*from tmp.'||prefix||'_ordered*/
 	from '||tbl||'
 	)
@@ -206,14 +206,14 @@ if cluster_index::boolean then
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||' from 
 	tmp.'||prefix||'_boundary bd inner join
 	tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id order by boxx, boxy'',
-	''twkb'',''twkb_id'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
 else
 	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 	'''||layer_name||''',
 	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||' from 
 	tmp.'||prefix||'_boundary bd inner join
 	tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id order by boxx, boxy'',
-	''twkb'',''twkb_id'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'',1);' into res;
 end if;
 
 
@@ -315,13 +315,13 @@ execute '
 	'''||layer_name||''',
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_w_rank bd order by boxx, boxy'',
-	''twkb'',''twkb_id'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
 else
 	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 	'''||layer_name||''',
 	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_subgeoms bd order by boxx, boxy'',
-	''twkb'',''twkb_id'', ''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
+	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
 end if;
 
 
@@ -333,3 +333,92 @@ $BODY$
 
   
 
+CREATE or replace FUNCTION tileless.pack_twkb_point(
+    tbl text,
+    geom_fld text,
+    id_fld text,
+    other_flds text,
+    db text,
+    layer_name text,
+    prefix text DEFAULT ('d'::text || now()),
+    n_decimals integer DEFAULT 0,
+    cluster_index integer DEFAULT 0)
+  RETURNS bigint AS
+$BODY$
+declare 
+res int;
+BEGIN
+
+if length(other_flds) >0 then
+	other_flds = ','||other_flds; 
+end if;
+
+execute 'drop sequence if exists tileless.'||prefix||'_sequence;
+CREATE SEQUENCE tileless.'||prefix||'_sequence
+  INCREMENT 1
+  MINVALUE 1
+  MAXVALUE 9223372036854775807
+  START 1
+  CACHE 1;';
+
+
+/*
+RAISE NOTICE 'Starta spatial ordering %s',now()::text;
+
+execute 
+'drop table if exists tmp.'||prefix||'_ordered;
+create table tmp.'||prefix||'_ordered as
+select *  from 
+(select '||id_fld||', '||geom_fld||',  st_centroid('||geom_fld||') centr '||other_flds||'
+from '||tbl||') a
+order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
+*/
+
+RAISE NOTICE 'Klar med spatial ordering';
+RAISE NOTICE 'Starta subgeoms %s',now()::text;
+
+	execute 
+	'drop table if exists tmp.'||prefix||'_subgeoms;
+	create table tmp.'||prefix||'_subgeoms as
+	with a as (select '||id_fld||' orig_id, 
+	(st_dump(st_collectionextract(st_makevalid(st_removerepeatedpoints(st_snaptogrid('||geom_fld||',1/10^('||n_decimals||')),0)),1))).geom geom '||other_flds||'
+	/*from tmp.'||prefix||'_ordered*/
+	from '||tbl||'
+	)
+	,b as (select orig_id, ST_ForceRHR((st_dump(st_collectionextract(st_makevalid(geom),1))).geom) geom '||other_flds||' from a)
+	select *,(st_xmin(geom) + (st_xmax(geom)-st_xmin(geom))/2)/10000 boxx, (st_ymin(geom) + (st_ymax(geom)-st_ymin(geom))/2)/10000 boxy from b;';
+
+execute 'alter table tmp.'||prefix||'_subgeoms add column twkb_id serial primary key;';
+
+
+RAISE NOTICE 'Klar med subgeoms';
+
+if cluster_index::boolean then
+execute '
+	drop table if exists  tmp.'||prefix||'_w_rank;
+	create table tmp.'||prefix||'_w_rank as select * , 
+	dense_rank() over(order by 
+	round((st_xmin(geom) + (st_xmax(geom)-st_xmin(geom))/2)/'||cluster_index||'), round((st_ymin(geom) + (st_ymax(geom)-st_ymin(geom))/2)/'||cluster_index||')) idx_id from tmp.'||prefix||'_subgeoms;
+	drop table if exists  tmp.'||prefix||'_for_index;
+	create table tmp.'||prefix||'_for_index as with a as (SELECT ST_COLLECT(geom) geom, idx_id from tmp.'||prefix||'_w_rank group by idx_id)
+	select idx_id, geom from a order by (st_xmin(geom) + (st_xmax(geom)-st_xmin(geom))/2)/10000, (st_ymin(geom) + (st_ymax(geom)-st_ymin(geom))/2)/10000;
+
+
+	select tileless.TWKB_Write2SQLite('''||db||''',
+	'''||layer_name||''',
+	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
+	tmp.'||prefix||'_w_rank bd order by boxx, boxy'',
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+else
+	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
+	'''||layer_name||''',
+	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
+	tmp.'||prefix||'_subgeoms bd order by boxx, boxy'',
+	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
+end if;
+
+
+return res;
+END
+$BODY$
+  LANGUAGE plpgsql VOLATILE;

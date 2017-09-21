@@ -19,10 +19,6 @@
 
 #define SQLSTRLEN 8192
 
-int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_name, char *twkb_name,char *id_name,int create);
-//int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_geom, char *idx_id, char *sql_string);
-int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id, char *sql_string, int create);
-
 /*Input a postgres type and get a sqlite type back
 Anything but what is defined in types results as "text"*/
 int getsqlitetype(char *pgtype, char *sqlitetype)
@@ -52,7 +48,7 @@ int getsqlitetype(char *pgtype, char *sqlitetype)
     return 0;
 }
 
-int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_name, char *twkb_name, char *id_name, int create)
+static int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_name, char *twkb_name, char *id_name,int spatial, int create)
 {
     char create_table_string[SQLSTRLEN];
     char tmp_str[64];
@@ -104,7 +100,7 @@ int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_
                      (i == tupdesc->natts) ? " " : ", ");
             strlengd_ins += strlen(id_name) + 1; //adding 1 for the comma-sign
         }
-        else if (strcmp(field_name, twkb_name)==0)
+        else if (spatial && strcmp(field_name, twkb_name)==0)
         {
             snprintf(tmp_str, sizeof(tmp_str), " %s%s",
                      " twkb blob",
@@ -175,7 +171,10 @@ int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_
     return 0;
 }
 
-int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id, char *sql_string, int create)
+
+
+
+static int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * idx_geom, char *idx_id, char *sql_string, int create)
 {
     char sql_txt_pg[SQLSTRLEN];
     char sql_txt_sqlite[SQLSTRLEN];
@@ -359,8 +358,10 @@ int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,char * i
 
     return 0;
 }
-int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char *twkb_name,char *id_name,char *idx_geom,char *idx_tbl, char *idx_id, int create)
+int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id, int create)
 {
+    
+    
     char *err_msg;
     int spi_conn;
     int  proc, rc;
@@ -380,7 +381,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
     bool null_check;
     char *pg_type;
     int tot_rows = 0;
-
+    int is_spatial = 0;
     sqlite3_stmt *prepared_statement;
 
     spi_conn = SPI_connect();
@@ -410,12 +411,22 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
 
 
     elog(INFO, "build sql-strings and create table if : %d",create);
-    if(	create_sqlite_table(&cur,db, insert_str,dataset_name,twkb_name, id_name,create))
-    {
-        elog(INFO, "failed");
-        SPI_finish();
-        return 1;
-    }
+    
+    if(twkb_name && idx_geom && idx_id)
+        is_spatial = 1;
+
+    
+    elog(INFO, "is_spatial = %d\n",is_spatial);
+
+        if(	create_sqlite_table(&cur,db, insert_str,dataset_name,twkb_name, id_name,is_spatial,create))
+        {
+            elog(INFO, "failed");
+            SPI_finish();
+            return 1;
+        }
+
+        
+        
     elog(INFO, "back from creating table");
     elog(INFO, "inserted sql = %s",insert_str);
 //TODO add error handling
@@ -538,7 +549,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
     }
     while (proc > 0);
 
-    if(dataset_name && idx_geom && idx_id)
+    if(is_spatial)
     {
         if(create_spatial_index(db,dataset_name,idx_tbl, idx_geom, idx_id,sql_string,create))
         {
@@ -547,9 +558,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
             SPI_finish();
             return 1; //We return without failure because otherwise the whole t4ransaction will be rolled bask in pg.
         }
-    }
-    else
-        elog(INFO, "Finnishing without spatial index");
+
 
     
     if(strcmp(idx_id, id_name))
@@ -567,11 +576,13 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string, char 
             return 1;
         }
     }
-    
+      }
+    else
+        elog(INFO, "Finnishing without spatial index");  
     SPI_cursor_close(cur);
     SPI_finish();
     sqlite3_close(db);
-
+elog(INFO, "Return from writing"); 
     return 0;
 }
 
