@@ -1,4 +1,4 @@
-default_version = '0.1'
+default_version = '0.2'
 module_pathname = '$libdir/pg_tileless'
 requires 'postgis, postgis_sfcgal'
 relocatable = true

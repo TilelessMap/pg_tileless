@@ -11,11 +11,10 @@ create schema if not exists tileless;
 
 create schema if not exists tmp;
 
-CREATE OR REPLACE FUNCTION tileless.TWKB_Write2SQLite(sqlitedb text,dataset_name text ,sql_string text, id_name text,twkb_name text default NULL,idx_tbl text default NULL, idx_geom text default NULL, idx_id text default NULL, create_table int default 1)
+CREATE OR REPLACE FUNCTION tileless.TWKB_Write2SQLite(sqlitedb text,dataset_name text ,sql_string text, id_name text,twkb_name text default NULL,idx_tbl text default NULL, idx_geom text default NULL, idx_id text default NULL,geometry_type int default 0, tri_idx_fld text default 'tri_index', utm int default 0, hemi int default 0, n_dims int default 2, create_table int default 1)
 RETURNS int
 AS 'MODULE_PATHNAME', 'TWKB_Write2SQLite'
 LANGUAGE c ;
-
 
 CREATE OR REPLACE FUNCTION tileless.pack_twkb_polygon(
     tbl text,
@@ -24,7 +23,7 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_polygon(
     other_flds text,
     db text,
     layer_name text,
-    prefix text default 'd'||now(),
+    prefix text default 'd'||clock_timestamp(),
     n_decimals integer default 0,
     subdivide boolean default true,
     cluster_index integer default 0)
@@ -32,6 +31,10 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_polygon(
 $BODY$
 declare
 res int;
+srid_i int;
+utm_zone int;
+hemi int;
+n_dims int;
 BEGIN
 
 if length(other_flds) >0 then
@@ -45,6 +48,18 @@ CREATE SEQUENCE tmp.'||prefix||'_sequence
   MAXVALUE 9223372036854775807
   START 1
   CACHE 1;';
+
+
+
+
+
+select srid, coord_dimension from geometry_columns where (f_table_schema, f_table_name) in (select table_schema, table_name  from information_schema.tables where table_name = tbl order by table_type='LOCAL TEMPORARY' desc limit 1) into srid_i, n_dims;
+
+if srid_i is null or n_dims is null then
+	execute 'select distinct on (st_srid('||geom_fld||'), st_ndims('||geom_fld||') ) st_srid('||geom_fld||') , st_ndims('||geom_fld||') from  '||tbl||' limit 1 ' into srid_i, n_dims;
+end if;
+
+select (regexp_matches(uz, '\d+'))[1]::int, (right(uz, 1)='S')::int from (select srid, (regexp_matches(srtext, 'UTM zone \d{1,2}[S,N]'))[1] uz from spatial_ref_sys where srid = srid_i) a into utm_zone, hemi;
 
 /*
 
@@ -60,7 +75,7 @@ order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
 
 
 RAISE NOTICE 'Klar med spatial ordering';*/
-RAISE NOTICE 'Starta subgeoms %s',now()::text;
+RAISE NOTICE 'Starta subgeoms %s',clock_timestamp()::text;
 
 --select * from __trianglar
 if subdivide then
@@ -90,7 +105,7 @@ execute 'alter table tmp.'||prefix||'_subgeoms add column twkb_id serial primary
 
 
 RAISE NOTICE 'Klar med subgeoms';
-RAISE NOTICE 'Starta trianglar %s',now()::text;
+RAISE NOTICE 'Starta trianglar %s',clock_timestamp()::text;
 
 
 execute 'drop table if exists tmp.'||prefix||'_trianglar;
@@ -104,7 +119,7 @@ create index idx_'||prefix||'_tri_id on tmp.'||prefix||'_trianglar using btree(t
 analyze tmp.'||prefix||'_trianglar;';
 
 RAISE NOTICE 'Klar med trianglar';
-RAISE NOTICE 'Starta boundary %s',now()::text;
+RAISE NOTICE 'Starta boundary %s',clock_timestamp()::text;
 
 
 execute 'drop view if exists onepoly; drop table if exists tmp.'||prefix||'_boundary;';
@@ -151,7 +166,7 @@ select twkb_id, (d).geom geom, (d).path[1] point_index from e order by twkb_id, 
 
 
 RAISE NOTICE 'Klar med boundary';
-RAISE NOTICE 'Starta triindex %s',now()::text;
+RAISE NOTICE 'Starta triindex %s',clock_timestamp()::text;
 
 
 execute 'drop table if exists tmp.'||prefix||'_triindex;
@@ -166,7 +181,7 @@ delete from tmp.'||prefix||'_triindex where not twkb_id=tid;';
 
 
 RAISE NOTICE 'Klar med triindex';
-RAISE NOTICE 'Starta index_array %s',now()::text;
+RAISE NOTICE 'Starta index_array %s',clock_timestamp()::text;
 
 execute 'drop table if exists tmp.'||prefix||'_index_array_step0;
 
@@ -189,7 +204,7 @@ select twkb_id, st_astwkb(ST_MakeLine(st_makepoint(t[1], t[2], t[3]))) pi from (
 
 
 RAISE NOTICE 'Klar med index_array';
-RAISE NOTICE 'Starta skrivning till sqlite %s',now()::text;
+RAISE NOTICE 'Starta skrivning till sqlite %s',clock_timestamp()::text;
 
 
 execute 'create or replace temp view onepoly as
@@ -207,7 +222,7 @@ RAISE NOTICE 'Ok, med klustrat index';
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||' from 
 	tmp.'||prefix||'_boundary bd inner join
 	tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id order by boxx, boxy'',
-	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'', 3, ''tri_index'','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 else
 
 RAISE NOTICE 'Ok, utan klustrat index';
@@ -216,7 +231,7 @@ RAISE NOTICE 'Ok, utan klustrat index';
 	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb,ia.pi tri_index '||other_flds||' from 
 	tmp.'||prefix||'_boundary bd inner join
 	tmp.'||prefix||'_index_array ia on bd.twkb_id=ia.twkb_id order by boxx, boxy'',
-	''twkb_id'',''twkb'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_boundary'',''geom'', ''twkb_id'', 3, ''tri_index'','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 end if;
 
 
@@ -236,7 +251,7 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_linestring(
     other_flds text,
     db text,
     layer_name text,
-    prefix text default 'd'||now(),
+    prefix text default 'd'||clock_timestamp(),
     n_decimals integer default 0,
     subdivide boolean default true,
     cluster_index integer default 0)
@@ -244,6 +259,10 @@ CREATE OR REPLACE FUNCTION tileless.pack_twkb_linestring(
 $BODY$
 declare 
 res int;
+srid_i int;
+utm_zone int;
+hemi int;
+n_dims int;
 BEGIN
 
 if length(other_flds) >0 then
@@ -271,8 +290,18 @@ from '||tbl||') a
 order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
 */
 
-RAISE NOTICE 'Klar med spatial ordering';
-RAISE NOTICE 'Starta subgeoms %s',now()::text;
+
+
+
+select srid, coord_dimension from geometry_columns where (f_table_schema, f_table_name) in (select table_schema, table_name  from information_schema.tables where table_name = tbl order by table_type='LOCAL TEMPORARY' desc limit 1) into srid_i, n_dims;
+
+if srid_i is null or n_dims is null then
+	execute 'select distinct on (st_srid('||geom_fld||'), st_ndims('||geom_fld||') ) st_srid('||geom_fld||') , st_ndims('||geom_fld||') from  '||tbl||' limit 1 ' into srid_i, n_dims;
+end if;
+
+select (regexp_matches(uz, '\d+'))[1]::int, (right(uz, 1)='S')::int from (select srid, (regexp_matches(srtext, 'UTM zone \d{1,2}[S,N]'))[1] uz from spatial_ref_sys where srid = srid_i) a into utm_zone, hemi;
+
+RAISE NOTICE 'Starta subgeoms %s',clock_timestamp()::text;
 
 --select * from __trianglar
 if subdivide then
@@ -318,13 +347,13 @@ execute '
 	'''||layer_name||''',
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_w_rank bd order by boxx, boxy'',
-	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'', 2, '''','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 else
 	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 	'''||layer_name||''',
 	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_subgeoms bd order by boxx, boxy'',
-	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
+	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'', 2, '''','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 end if;
 
 
@@ -343,13 +372,17 @@ CREATE or replace FUNCTION tileless.pack_twkb_point(
     other_flds text,
     db text,
     layer_name text,
-    prefix text DEFAULT ('d'::text || now()),
+    prefix text DEFAULT ('d'::text || clock_timestamp()),
     n_decimals integer DEFAULT 0,
     cluster_index integer DEFAULT 0)
   RETURNS bigint AS
 $BODY$
 declare 
 res int;
+srid_i int;
+utm_zone int;
+hemi int;
+n_dims int;
 BEGIN
 
 if length(other_flds) >0 then
@@ -377,8 +410,17 @@ from '||tbl||') a
 order by round(st_x(centr)/10000),round(st_y(centr)/10000);';
 */
 
-RAISE NOTICE 'Klar med spatial ordering';
-RAISE NOTICE 'Starta subgeoms %s',now()::text;
+
+select srid, coord_dimension from geometry_columns where (f_table_schema, f_table_name) in (select table_schema, table_name  from information_schema.tables where table_name = tbl order by table_type='LOCAL TEMPORARY' desc limit 1) into srid_i, n_dims;
+
+if srid_i is null or n_dims is null then
+	execute 'select distinct on (st_srid('||geom_fld||'), st_ndims('||geom_fld||') ) st_srid('||geom_fld||') , st_ndims('||geom_fld||') from  '||tbl||' limit 1 ' into srid_i, n_dims;
+end if;
+
+select (regexp_matches(uz, '\d+'))[1]::int, (right(uz, 1)='S')::int from (select srid, (regexp_matches(srtext, 'UTM zone \d{1,2}[S,N]'))[1] uz from spatial_ref_sys where srid = srid_i) a into utm_zone, hemi;
+
+
+RAISE NOTICE 'Starta subgeoms %s',clock_timestamp()::text;
 
 	execute 
 	'drop table if exists tmp.'||prefix||'_subgeoms;
@@ -411,13 +453,13 @@ execute '
 	'''||layer_name||''',
 	''SELECT bd.idx_id, bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_w_rank bd order by boxx, boxy'',
-	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'',1);' into res;
+	''twkb_id'',''twkb'', ''tmp.'||prefix||'_for_index'',''geom'', ''idx_id'', 1, '''','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 else
 	execute 'select tileless.TWKB_Write2SQLite('''||db||''',
 	'''||layer_name||''',
 	''SELECT bd.twkb_id, bd.orig_id, st_astwkb(geom, '||n_decimals||') twkb '||other_flds||' from 
 	tmp.'||prefix||'_subgeoms bd order by boxx, boxy'',
-	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'',1);' into res;
+	''twkb_id'', ''twkb'',''tmp.'||prefix||'_subgeoms'',''geom'', ''twkb_id'', 1, '''','||utm_zone||', '||hemi||', '||n_dims||' ,1);' into res;
 end if;
 
 

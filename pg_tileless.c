@@ -29,8 +29,8 @@ Datum TWKB_Write2SQLite(PG_FUNCTION_ARGS)
 {
     
     
-    char *sqlitedb_name,*dataset_name, *sql_string, *twkb_name, *id_name,*idx_tbl, *idx_geom, *idx_id;
-    int create, res;
+    char *sqlitedb_name,*dataset_name, *sql_string, *twkb_name, *id_name,*idx_tbl, *idx_geom, *idx_id, *tri_idx;
+    int create, res, geometry_type, utm, hemi, n_dims;
     /*Name of sqlite-database to write to*/
     if ( PG_NARGS() < 1 || PG_ARGISNULL(0) )
     {
@@ -98,18 +98,54 @@ Datum TWKB_Write2SQLite(PG_FUNCTION_ARGS)
     }
     else 
         idx_id = text_to_cstring(PG_GETARG_TEXT_P(7));
-    /*if the table shall be created*/
+    /*What is the geometry_type*/
     if( PG_NARGS() < 9|| PG_ARGISNULL(8))
+    {
+        geometry_type = 0;
+    }
+    else
+        geometry_type = PG_GETARG_INT32(8);
+    
+    /*The name of the tri_index column*/
+    if( PG_NARGS() < 10|| PG_ARGISNULL(9))
+    {
+        tri_idx = NULL;
+    }
+    else 
+        tri_idx = text_to_cstring(PG_GETARG_TEXT_P(9));
+ 
+    if( PG_NARGS() < 11|| PG_ARGISNULL(10))
+    {
+        utm = 0;
+    }
+    else
+        utm = PG_GETARG_INT32(10);
+
+    if( PG_NARGS() < 12|| PG_ARGISNULL(11))
+    {
+        hemi = 0;
+    }
+    else
+        hemi = PG_GETARG_INT32(11);
+
+    if( PG_NARGS() < 13|| PG_ARGISNULL(12))
+    {
+        n_dims = 2;
+    }
+    else
+        n_dims = PG_GETARG_INT32(12);
+
+    if( PG_NARGS() < 14|| PG_ARGISNULL(13))
     {
         create = 1;
     }
     else
-        create = PG_GETARG_INT32(8);
+        create = PG_GETARG_INT32(13);
 
 
 
 //	PG_FREE_IF_COPY(bytea_twkb, 0);
-    res = write2sqlite(sqlitedb_name,dataset_name, sql_string,id_name, twkb_name,idx_geom,idx_tbl, idx_id, create);
+    res = write2sqlite(sqlitedb_name,dataset_name, sql_string,id_name, twkb_name,idx_geom,idx_tbl, idx_id,geometry_type,tri_idx, utm, hemi, n_dims, create);
 
 elog(INFO, "back from writing");
 elog(INFO, "have res = %d\n",res); 

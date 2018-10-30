@@ -40,4 +40,5 @@ void lwnotice(const char *fmt, ...);
 void lwerror(const char *fmt, ...);
 
 int getsqlitetype(char *pgtype, char *sqlitetype);
-int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id, int create);
+//int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id, int create);
+int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id,int geometry_type, char *tri_index_fld, int utm, int hemi, int n_dims, int create);

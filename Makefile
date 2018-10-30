@@ -7,12 +7,15 @@ OBJS = 	pg_tileless.o \
 	sqlite_writer.o \
 
 EXTENSION = pg_tileless
-DATA = pg_tileless--0.1.sql
+DATA = pg_tileless--0.1.sql \
+pg_tileless--0.1--0.2.sql \
+pg_tileless--0.2.sql 
 
 EXTRA-CLEAN =
 
 #PG_CONFIG = pg_config
-PG_CONFIG =/usr/lib/postgresql/9.6/bin/pg_config
+PG_CONFIG =/usr/lib/postgresql/11/bin/pg_config
+#PG_CONFIG =/usr/lib/postgresql/10/bin/pg_config
 
 CFLAGS += $(shell $(CURL_CONFIG) --cflags) -g
 

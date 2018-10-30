@@ -19,6 +19,9 @@
 
 #define SQLSTRLEN 8192
 
+int search_string(const char *w,const char *s);
+int check_table(sqlite3 *db, const unsigned char  *table_name);
+int check_column(sqlite3 *db, const unsigned char  *table_name,const unsigned char  *col_name );
 /*Input a postgres type and get a sqlite type back
 Anything but what is defined in types results as "text"*/
 int getsqlitetype(char *pgtype, char *sqlitetype)
@@ -48,6 +51,97 @@ int getsqlitetype(char *pgtype, char *sqlitetype)
     return 0;
 }
 
+
+int search_string(const char *w,const char *s)
+{
+    int i, n, w_len,s_len ;
+    if(w==NULL ||s==NULL)
+        return 0;
+    w_len = strlen(w);
+    s_len = strlen(s);
+
+    for (i = 0; i<w_len; i++)
+    {
+        if(w[i] == s[0])
+        {
+            n = 1;
+            while(w[i+n] == s[n])
+            {
+                n++;
+            }
+            if(n==s_len)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+
+int check_table(sqlite3 *db, const unsigned char  *table_name)
+{
+
+    char sql[1024];
+    int rc;
+
+    sqlite3_stmt *prepared_sql;
+    snprintf(sql, 1024, "select count(*) from sqlite_master where type in ('table','view') and name = '%s'", table_name);
+
+    rc = sqlite3_prepare_v2(db, sql, -1, &prepared_sql, 0);
+
+    if (rc != SQLITE_OK ) {
+            elog(INFO, "error creating table");
+            fprintf(stderr, "SQL error in: %s\n", sql);
+        return 0;
+    }
+
+
+    if(sqlite3_step(prepared_sql) ==  SQLITE_ROW)
+    {
+        if(sqlite3_column_int(prepared_sql, 0)==1)
+        {
+            sqlite3_finalize(prepared_sql);
+            return 1;
+        }
+    }
+
+    sqlite3_finalize(prepared_sql);
+    return 0;
+
+}
+
+
+
+
+int check_column(sqlite3 *db, const unsigned char  *table_name,const unsigned char  *col_name )
+{
+    char sql[1024];
+    int rc, res;
+    sqlite3_stmt *prepared_sql;
+    snprintf(sql, 1024, "select sql from sqlite_master where type in ('table','view') and name = '%s'", table_name);
+
+    rc = sqlite3_prepare_v2(db, sql, -1, &prepared_sql, 0);
+
+    if (rc != SQLITE_OK ) {
+            elog(INFO, "error creating table");
+            fprintf(stderr, "SQL error in: %s\n", sql);
+        return 0;
+    }
+
+
+    if(sqlite3_step(prepared_sql) ==  SQLITE_ROW)
+    {
+        const char *w = (const char*) sqlite3_column_text(prepared_sql, 0);
+
+        res = search_string(w,(const char*) col_name);
+        sqlite3_finalize(prepared_sql);
+        return res;
+    }
+
+    sqlite3_finalize(prepared_sql);
+    return 0;
+
+
+}
 static int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *dataset_name, char *twkb_name, char *id_name,int spatial, int create)
 {
     char create_table_string[SQLSTRLEN];
@@ -160,6 +254,7 @@ static int create_sqlite_table(Portal *cur,sqlite3 *db,char *insert_str, char *d
         if (rc != SQLITE_OK ) {
 
             elog(INFO, "error creating table");
+            fprintf(stderr, "SQL error: %s\n", err_msg);
             sqlite3_free(err_msg);
             sqlite3_close(db);
             return 1;
@@ -212,7 +307,7 @@ static int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,c
         }
         elog(INFO, "create table string: %s", sql_txt_pg);
     }
-    snprintf(sql_txt_pg,sizeof(sql_txt_pg), " with o as (%s), g as( select %s id, %s geom from %s ) select g.id, st_xmin(g.geom) minx,st_xmax(g.geom) maxx,st_ymin(g.geom) miny,st_ymax(g.geom) maxy from g inner join o on g.id=o.%s;",
+    snprintf(sql_txt_pg,sizeof(sql_txt_pg), " with o as (%s), g as( select * from (select %s id, %s geom from %s)f where id is not null and geom is not null) select g.id, st_xmin(g.geom) minx,st_xmax(g.geom) maxx,st_ymin(g.geom) miny,st_ymax(g.geom) maxy from g inner join o on g.id=o.%s;",
              sql_string,
              idx_id,
              idx_geom,
@@ -341,6 +436,7 @@ static int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,c
             sqlite3_reset(prepared_statement);
         }
 
+
         rc = sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &err_msg);
         if (rc != SQLITE_OK ) {
             sqlite3_free(err_msg);
@@ -358,7 +454,9 @@ static int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,c
 
     return 0;
 }
-int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id, int create)
+
+
+int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *id_name, char *twkb_name,char *idx_geom,char *idx_tbl, char *idx_id,int geometry_type, char *tri_index_fld, int utm, int hemi, int n_dims, int create)
 {
     
     
@@ -454,13 +552,15 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
 
             tuple = tuptable->vals[j];
 
-
+    
             for (i = 1; i <= tupdesc->natts; i++)
             {
                 pg_type = SPI_gettype(tupdesc, i);
+               // elog(INFO, "pg_type = %s", pg_type);
                 if(strcmp(pg_type, "bool")==0)
                 {
                     val_int = (bool) (DatumGetBool(SPI_getbinval(tuple,tupdesc,i, &null_check)) ? 1:0);
+                    //elog(INFO, "bool value is %d", val_int);
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
                     else
@@ -469,6 +569,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 if(strcmp(pg_type, "int2")==0)
                 {
                     val_int = (int) DatumGetInt16(SPI_getbinval(tuple,tupdesc,i, &null_check));
+                    //elog(INFO, "int2 value is %d", val_int);
                     //TODO add error handling
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
@@ -478,6 +579,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 else if(strcmp(pg_type, "int4")==0)
                 {
                     val_int = (int) DatumGetInt32(SPI_getbinval(tuple,tupdesc,i, &null_check));
+                    //elog(INFO, "int4 value is %d", val_int);
                     //TODO add error handling
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
@@ -488,6 +590,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 else if(strcmp(pg_type, "int8")==0)
                 {
                     val_int64 = (int64) DatumGetInt64(SPI_getbinval(tuple,tupdesc,i, &null_check));
+                    //elog(INFO, "int8 value is %ld", val_int64);
                     //TODO add error handling
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
@@ -497,6 +600,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 else if(strcmp(pg_type, "float4")==0)
                 {
                     val_float = (float8) DatumGetFloat4(SPI_getbinval(tuple,tupdesc,i, &null_check));
+                    //elog(INFO, "float4 value is %lf", val_float);
                     //TODO add error handling
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
@@ -507,6 +611,7 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 else if(strcmp(pg_type, "float8")==0)
                 {
                     val_float = (float8) DatumGetFloat8(SPI_getbinval(tuple,tupdesc,i, &null_check));
+                    elog(INFO, "float8 value is %lf", val_float);
                     //TODO add error handling
                     if(null_check)
                         sqlite3_bind_null(prepared_statement, i);
@@ -515,12 +620,18 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
                 }
                 else if(strcmp(pg_type, "bytea")==0)
                 {
-                    val_p = (void*) PG_DETOAST_DATUM(SPI_getbinval(tuple,tupdesc,i, &null_check));
-                    //TODO add error handling
-                    if(null_check)
-                        sqlite3_bind_null(prepared_statement, i);
-                    else
-                        sqlite3_bind_blob(prepared_statement, i, (const void*) VARDATA_ANY(val_p), VARSIZE_ANY(val_p)-VARHDRSZ, SQLITE_TRANSIENT);
+                  Datum d = SPI_getbinval(tuple,tupdesc,i, &null_check);
+
+                  //TODO add error handling
+                  if(null_check)
+                  {
+                    sqlite3_bind_null(prepared_statement, i);
+                  }
+                  else
+                  {
+                    val_p = (void*) PG_DETOAST_DATUM(d);
+                    sqlite3_bind_blob(prepared_statement, i, (const void*) VARDATA_ANY(val_p), VARSIZE_ANY(val_p)-VARHDRSZ, SQLITE_TRANSIENT);
+                  }
                 }
                 else
                 {
@@ -564,7 +675,6 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
     if(strcmp(idx_id, id_name))
     {
      //Since idx_id is different than id_name we have to add an index for idx_id too in main table
-        
         char sqlstr[128];
         snprintf(sqlstr, 128,  "create index idx_%s_idx_id on %s( %s );", dataset_name, dataset_name, idx_id);
         rc = sqlite3_exec(db, sqlstr, NULL, NULL, &err_msg);
@@ -576,6 +686,34 @@ int write2sqlite(char *sqlitedb_name,char *dataset_name, char *sql_string,char *
             return 1;
         }
     }
+
+    
+    if(!check_table(db, (const unsigned char*) "geometry_columns"))
+    {
+        
+        char *sqlstr = "CREATE TABLE geometry_columns( layer_name INT, geometry_type INT, geometry_fld INT, id_fld TEXT,idx_id TEXT, spatial_idx_fld TEXT, tri_idx_fld INT, utm_zone INT, hemisphere INT , n_dims int);";
+        rc = sqlite3_exec(db, sqlstr, NULL, NULL, &err_msg);
+        if (rc != SQLITE_OK ) 
+        {
+            sqlite3_free(err_msg);
+            sqlite3_close(db);
+            elog(INFO, "Problem with sql '%s', error =  %s",sqlstr,  err_msg);
+            return 1;
+        } 
+    }
+    char sqlstr[256];
+    snprintf(sqlstr, 255, "INSERT INTO geometry_columns(layer_name, geometry_type, geometry_fld, id_fld,  idx_id, spatial_idx_fld, tri_idx_fld, utm_zone, hemisphere , n_dims) values ('%s',%d,'twkb','twkb_id','%s','%s'||'_idx_geom','%s',%d,%d,%d)",
+    dataset_name,geometry_type,idx_id,dataset_name,tri_index_fld, utm,hemi,n_dims);
+    
+    elog(INFO, "insert into geoemtry_columns: %s", sqlstr); 
+           rc = sqlite3_exec(db, sqlstr, NULL, NULL, &err_msg);
+        if (rc != SQLITE_OK ) 
+        {
+            sqlite3_free(err_msg);
+            sqlite3_close(db);
+            elog(INFO, "Problem with sql '%s', error =  %s",sqlstr,  err_msg);
+            return 1;
+        }
       }
     else
         elog(INFO, "Finnishing without spatial index");  
