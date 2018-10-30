@@ -291,11 +291,20 @@ static int create_spatial_index(sqlite3 *db,char  *dataset_name, char *idx_tbl,c
 
     if(create)
     {
+      if(create == 1)
+      {
         snprintf(sql_txt_pg,sizeof(sql_txt_pg), " %s%s%s",
                  "CREATE VIRTUAL TABLE ",
                  dataset_name,
                  "_idx_geom USING rtree(id,minX, maxX,minY, maxY)");
-
+      }
+      else if(create == 2)
+      {
+            snprintf(sql_txt_pg,sizeof(sql_txt_pg), " %s%s%s",
+              "CREATE TABLE ",
+              dataset_name,
+              "_idx_geom(id int,minX float, maxX float,minY float, maxY float)");
+      }
         rc = sqlite3_exec(db, sql_txt_pg, NULL, 0, &err_msg);
 
         if (rc != SQLITE_OK ) {
